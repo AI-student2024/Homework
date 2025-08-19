@@ -407,20 +407,358 @@ def test_rbac_system():
     print("💡 提示: 运行 'python rbac_simple.py' 来执行这些测试")
     print("🚀 或者启动FastAPI服务器: 'uvicorn rbac_simple:app --reload'")
 
+# ==================== 交互式CLI测试界面 ====================
+
+def interactive_cli():
+    """
+    交互式命令行测试界面
+    
+    提供菜单驱动的测试选项，让用户可以：
+    1. 选择不同的测试功能
+    2. 输入测试参数
+    3. 查看详细的测试结果
+    4. 进行交互式权限验证
+    """
+    
+    def print_menu():
+        """打印主菜单"""
+        print("\n" + "=" * 60)
+        print("🎮 RBAC系统交互式测试界面")
+        print("=" * 60)
+        print("请选择测试选项:")
+        print("  1. 🔐 用户登录测试")
+        print("  2. 👤 用户信息查看")
+        print("  3. 🔑 权限验证测试")
+        print("  4. 🌐 API端点权限测试")
+        print("  5. 📊 角色权限矩阵")
+        print("  6. 🧪 自定义权限测试")
+        print("  7. 📈 系统统计信息")
+        print("  8. 🚀 运行完整自动化测试")
+        print("  0. ❌ 退出测试")
+        print("=" * 60)
+    
+    def get_user_input(prompt: str, default: str = "") -> str:
+        """获取用户输入"""
+        if default:
+            user_input = input(f"{prompt} (默认: {default}): ").strip()
+            return user_input if user_input else default
+        else:
+            return input(f"{prompt}: ").strip()
+    
+    def test_user_login():
+        """交互式用户登录测试"""
+        print("\n🔐 用户登录测试")
+        print("-" * 40)
+        
+        username = get_user_input("请输入用户名")
+        password = get_user_input("请输入密码")
+        
+        print(f"\n🔍 正在验证用户: {username}")
+        
+        try:
+            if username in fake_users_db:
+                user = fake_users_db[username]
+                if user.password == password:
+                    print("✅ 登录成功!")
+                    print(f"👤 用户角色: {', '.join(user.roles)}")
+                    
+                    # 显示用户权限
+                    all_permissions = set()
+                    for role_name in user.roles:
+                        if role := fake_roles_db.get(role_name):
+                            all_permissions.update(role.permissions)
+                    
+                    print(f"🔑 用户权限: {', '.join(sorted(all_permissions))}")
+                    print(f"🎫 访问令牌: {username}")
+                    
+                    return username  # 返回登录成功的用户名
+                else:
+                    print("❌ 登录失败: 密码错误")
+            else:
+                print("❌ 登录失败: 用户不存在")
+        except Exception as e:
+            print(f"💥 登录过程出错: {str(e)}")
+        
+        return None
+    
+    def view_user_info():
+        """查看用户信息"""
+        print("\n👤 用户信息查看")
+        print("-" * 40)
+        
+        username = get_user_input("请输入要查看的用户名")
+        
+        if username in fake_users_db:
+            user = fake_users_db[username]
+            print(f"\n📋 用户信息:")
+            print(f"   用户名: {user.username}")
+            print(f"   角色: {', '.join(user.roles)}")
+            print(f"   状态: {'启用' if not user.disabled else '禁用'}")
+            
+            # 显示详细权限
+            print(f"\n🔑 详细权限:")
+            for role_name in user.roles:
+                if role := fake_roles_db.get(role_name):
+                    print(f"   {role_name}: {', '.join(role.permissions)}")
+        else:
+            print("❌ 用户不存在")
+    
+    def test_permission():
+        """交互式权限验证测试"""
+        print("\n🔑 权限验证测试")
+        print("-" * 40)
+        
+        username = get_user_input("请输入用户名")
+        permission = get_user_input("请输入要验证的权限")
+        
+        print(f"\n🔍 验证用户 '{username}' 的 '{permission}' 权限")
+        
+        if username not in fake_users_db:
+            print("❌ 用户不存在")
+            return
+        
+        user = fake_users_db[username]
+        print(f"👤 用户角色: {', '.join(user.roles)}")
+        
+        has_permission = False
+        for role_name in user.roles:
+            if role := fake_roles_db.get(role_name):
+                print(f"🔑 检查角色 '{role_name}': {role.permissions}")
+                if permission in role.permissions:
+                    has_permission = True
+                    print(f"✅ 角色 '{role_name}' 拥有所需权限")
+                    break
+                else:
+                    print(f"❌ 角色 '{role_name}' 缺少所需权限")
+        
+        if has_permission:
+            print("🎉 权限验证通过!")
+        else:
+            print("🚫 权限验证失败!")
+    
+    def test_api_endpoint():
+        """API端点权限测试"""
+        print("\n🌐 API端点权限测试")
+        print("-" * 40)
+        
+        endpoints = [
+            ("/admin-only", "delete", "管理员专用路由"),
+            ("/editor-content", "update", "编辑者内容路由"),
+            ("/public-content", "read", "公开内容路由"),
+            ("/me", "read", "用户信息路由")
+        ]
+        
+        print("可用的API端点:")
+        for i, (path, perm, desc) in enumerate(endpoints, 1):
+            print(f"  {i}. {path} - {desc} (需要权限: {perm})")
+        
+        try:
+            choice = int(get_user_input("请选择要测试的端点 (1-4)", "1"))
+            if 1 <= choice <= 4:
+                endpoint = endpoints[choice - 1]
+                username = get_user_input("请输入要测试的用户名")
+                
+                print(f"\n🔍 测试端点: {endpoint[0]}")
+                print(f"   描述: {endpoint[1]}")
+                print(f"   所需权限: {endpoint[2]}")
+                
+                if username in fake_users_db:
+                    user = fake_users_db[username]
+                    can_access = False
+                    
+                    for role_name in user.roles:
+                        if role := fake_roles_db.get(role_name):
+                            if endpoint[2] in role.permissions:
+                                can_access = True
+                                break
+                    
+                    if can_access:
+                        print(f"✅ 用户 '{username}' 可以访问此端点")
+                    else:
+                        print(f"❌ 用户 '{username}' 无法访问此端点")
+                else:
+                    print("❌ 用户不存在")
+            else:
+                print("❌ 无效选择")
+        except ValueError:
+            print("❌ 请输入有效数字")
+    
+    def show_role_matrix():
+        """显示角色权限矩阵"""
+        print("\n📊 角色权限矩阵")
+        print("-" * 40)
+        
+        print("角色名称".ljust(15) + "权限列表")
+        print("-" * 50)
+        
+        for role_name, role in fake_roles_db.items():
+            permissions_str = ", ".join(role.permissions)
+            print(f"{role_name.ljust(15)} {permissions_str}")
+        
+        # 显示权限统计
+        all_permissions = set()
+        for role in fake_roles_db.values():
+            all_permissions.update(role.permissions)
+        
+        print(f"\n📈 权限统计:")
+        print(f"   总权限数: {len(all_permissions)}")
+        print(f"   权限列表: {', '.join(sorted(all_permissions))}")
+    
+    def custom_permission_test():
+        """自定义权限测试"""
+        print("\n🧪 自定义权限测试")
+        print("-" * 40)
+        
+        print("可用的测试选项:")
+        print("  1. 测试用户对特定权限的访问")
+        print("  2. 比较两个用户的权限差异")
+        print("  3. 检查角色权限包含关系")
+        
+        choice = get_user_input("请选择测试类型 (1-3)", "1")
+        
+        if choice == "1":
+            username = get_user_input("请输入用户名")
+            permission = get_user_input("请输入要测试的权限")
+            
+            if username in fake_users_db:
+                user = fake_users_db[username]
+                has_permission = any(
+                    permission in fake_roles_db[role_name].permissions
+                    for role_name in user.roles
+                    if role_name in fake_roles_db
+                )
+                
+                print(f"\n🔍 权限检查结果:")
+                print(f"   用户: {username}")
+                print(f"   权限: {permission}")
+                print(f"   结果: {'✅ 拥有' if has_permission else '❌ 缺少'}")
+            else:
+                print("❌ 用户不存在")
+        
+        elif choice == "2":
+            user1 = get_user_input("请输入第一个用户名")
+            user2 = get_user_input("请输入第二个用户名")
+            
+            if user1 in fake_users_db and user2 in fake_users_db:
+                user1_obj = fake_users_db[user1]
+                user2_obj = fake_users_db[user2]
+                
+                # 获取用户权限
+                def get_user_permissions(username):
+                    user = fake_users_db[username]
+                    permissions = set()
+                    for role_name in user.roles:
+                        if role := fake_roles_db.get(role_name):
+                            permissions.update(role.permissions)
+                    return permissions
+                
+                perm1 = get_user_permissions(user1)
+                perm2 = get_user_permissions(user2)
+                
+                print(f"\n📊 权限比较结果:")
+                print(f"   {user1} 的权限: {', '.join(sorted(perm1))}")
+                print(f"   {user2} 的权限: {', '.join(sorted(perm2))}")
+                print(f"   共同权限: {', '.join(sorted(perm1 & perm2))}")
+                print(f"   独有权限: {', '.join(sorted(perm1 ^ perm2))}")
+            else:
+                print("❌ 用户不存在")
+        
+        elif choice == "3":
+            role1 = get_user_input("请输入第一个角色名")
+            role2 = get_user_input("请输入第二个角色名")
+            
+            if role1 in fake_roles_db and role2 in fake_roles_db:
+                perm1 = set(fake_roles_db[role1].permissions)
+                perm2 = set(fake_roles_db[role2].permissions)
+                
+                print(f"\n🔍 角色权限包含关系:")
+                print(f"   {role1} 包含 {role2}: {'✅' if perm2.issubset(perm1) else '❌'}")
+                print(f"   {role2} 包含 {role1}: {'✅' if perm1.issubset(perm2) else '❌'}")
+                print(f"   权限相等: {'✅' if perm1 == perm2 else '❌'}")
+            else:
+                print("❌ 角色不存在")
+    
+    def show_system_stats():
+        """显示系统统计信息"""
+        print("\n📈 系统统计信息")
+        print("-" * 40)
+        
+        total_users = len(fake_users_db)
+        total_roles = len(fake_roles_db)
+        total_permissions = set()
+        
+        for role in fake_roles_db.values():
+            total_permissions.update(role.permissions)
+        
+        print(f"👥 用户统计:")
+        print(f"   总用户数: {total_users}")
+        for username, user in fake_users_db.items():
+            print(f"     {username}: {', '.join(user.roles)}")
+        
+        print(f"\n🎭 角色统计:")
+        print(f"   总角色数: {total_roles}")
+        for role_name, role in fake_roles_db.items():
+            print(f"     {role_name}: {', '.join(role.permissions)}")
+        
+        print(f"\n🔑 权限统计:")
+        print(f"   总权限数: {len(total_permissions)}")
+        print(f"   权限列表: {', '.join(sorted(total_permissions))}")
+    
+    # 主循环
+    while True:
+        print_menu()
+        choice = get_user_input("请输入选项 (0-8)", "1")
+        
+        if choice == "0":
+            print("\n👋 感谢使用RBAC测试系统，再见!")
+            break
+        elif choice == "1":
+            test_user_login()
+        elif choice == "2":
+            view_user_info()
+        elif choice == "3":
+            test_permission()
+        elif choice == "4":
+            test_api_endpoint()
+        elif choice == "5":
+            show_role_matrix()
+        elif choice == "6":
+            custom_permission_test()
+        elif choice == "7":
+            show_system_stats()
+        elif choice == "8":
+            print("\n🚀 运行完整自动化测试...")
+            test_rbac_system()
+        else:
+            print("❌ 无效选择，请重新输入")
+        
+        # 等待用户确认继续
+        if choice != "0":
+            input("\n按回车键继续...")
+
 if __name__ == "__main__":
     """
-    当直接运行此文件时，执行测试代码
+    当直接运行此文件时，提供选择菜单
     """
     print("🔧 RBAC权限控制系统测试工具")
     print("正在初始化测试环境...")
     
-    # 执行测试
-    test_rbac_system()
+    print("\n请选择运行模式:")
+    print("  1. 🚀 运行完整自动化测试")
+    print("  2. 🎮 启动交互式CLI测试界面")
     
-    print("\n🎉 所有测试完成!")
-    print("\n📚 使用说明:")
-    print("1. 启动API服务器: uvicorn rbac_simple:app --reload")
-    print("2. 访问 http://localhost:8000/docs 查看API文档")
-    print("3. 使用 /token 端点获取访问令牌")
-    print("4. 在请求头中添加: Authorization: Bearer <your_token>")
-    print("5. 测试不同角色的权限控制")
+    choice = input("请输入选择 (1-2): ").strip()
+    
+    if choice == "2":
+        interactive_cli()
+    else:
+        # 执行自动化测试
+        test_rbac_system()
+        
+        print("\n🎉 所有测试完成!")
+        print("\n📚 使用说明:")
+        print("1. 启动API服务器: uvicorn rbac_simple:app --reload")
+        print("2. 访问 http://localhost:8000/docs 查看API文档")
+        print("3. 使用 /token 端点获取访问令牌")
+        print("4. 在请求头中添加: Authorization: Bearer <your_token>")
+        print("5. 测试不同角色的权限控制")
