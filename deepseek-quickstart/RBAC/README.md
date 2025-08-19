@@ -115,23 +115,40 @@ python rbac_simple.py
 
 ## 🔐 权限控制机制
 
-### 权限装饰器
+### 权限检查函数
 
-使用 `@permission_required(permission)` 装饰器来保护API端点：
+系统使用 `check_permission(user, required_permission)` 函数来验证用户权限：
 
 ```python
-@app.get("/admin-only")
-@permission_required("delete")
-async def admin_only_route(current_user: User = Depends(get_current_user)):
-    return {"message": "This is an admin-only route"}
+def check_permission(user: User, required_permission: str) -> bool:
+    """检查用户是否拥有指定权限"""
+    for role_name in user.roles:
+        if role := fake_roles_db.get(role_name):
+            if required_permission in role.permissions:
+                return True
+    return False
 ```
 
 ### 权限验证流程
 
 1. **用户认证**：验证Bearer Token
 2. **角色获取**：从用户信息中提取角色列表
-3. **权限检查**：遍历角色，检查是否包含所需权限
+3. **权限检查**：调用 `check_permission()` 函数验证权限
 4. **访问控制**：根据权限验证结果决定是否允许访问
+
+### API端点权限配置
+
+```python
+@app.get("/admin-only")
+async def admin_only_route(current_user: User = Depends(get_current_user)):
+    # 检查用户是否拥有delete权限
+    if not check_permission(current_user, "delete"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Require delete permission"
+        )
+    return {"message": "This is an admin-only route"}
+```
 
 ### 默认用户和角色
 
@@ -160,8 +177,33 @@ python rbac_simple.py
 - 用户认证流程
 - 角色权限矩阵
 - API端点访问权限
-- 权限控制装饰器
+- 权限检查函数
 - 系统统计信息
+
+### curl命令行测试
+
+curl是测试REST API最常用的命令行工具，以下是详细的测试方法：
+
+#### 环境准备
+
+确保FastAPI服务器正在运行：
+```bash
+uvicorn rbac_simple:app --reload
+```
+
+#### 基本测试流程
+
+1. **获取访问令牌**
+2. **使用令牌访问受保护的端点**
+3. **验证权限控制是否正常工作**
+
+#### 测试技巧
+
+- 使用 `-v` 参数查看详细的HTTP请求和响应
+- 使用 `-w "%{http_code}"` 只显示HTTP状态码
+- 使用 `-s` 参数静默模式，不显示进度条
+- 使用 `-H` 参数设置请求头
+- 使用 `-d` 参数发送POST数据
 
 ### 交互式CLI测试
 
@@ -211,28 +253,201 @@ python rbac_simple.py
 ### 1. 获取访问令牌
 
 ```bash
+# 管理员用户登录
 curl -X POST "http://localhost:8000/token" \
      -H "Content-Type: application/x-www-form-urlencoded" \
      -d "username=admin&password=adminpass"
+
+# 编辑者用户登录
+curl -X POST "http://localhost:8000/token" \
+     -H "Content-Type: application/x-www-form-urlencoded" \
+     -d "username=editor&password=editorpass"
+
+# 查看者用户登录
+curl -X POST "http://localhost:8000/token" \
+     -H "Content-Type: application/x-www-form-urlencoded" \
+     -d "username=viewer&password=viewerpass"
+
+# 错误密码测试
+curl -X POST "http://localhost:8000/token" \
+     -H "Content-Type: application/x-www-form-urlencoded" \
+     -d "username=admin&password=wrongpass"
 ```
 
 ### 2. 访问受保护的端点
 
+#### 管理员专用路由 (/admin-only)
 ```bash
+# 管理员访问（成功）
 curl -X GET "http://localhost:8000/admin-only" \
      -H "Authorization: Bearer admin"
+
+# 编辑者访问（失败 - 需要delete权限）
+curl -X GET "http://localhost:8000/admin-only" \
+     -H "Authorization: Bearer editor"
+
+# 查看者访问（失败 - 需要delete权限）
+curl -X GET "http://localhost:8000/admin-only" \
+     -H "Authorization: Bearer viewer"
+
+# 无认证访问（失败）
+curl -X GET "http://localhost:8000/admin-only"
 ```
 
-### 3. 测试不同角色的权限
-
+#### 编辑者内容路由 (/editor-content)
 ```bash
-# 管理员访问编辑者内容
+# 管理员访问（成功）
 curl -X GET "http://localhost:8000/editor-content" \
      -H "Authorization: Bearer admin"
 
-# 编辑者访问管理员内容（应该被拒绝）
-curl -X GET "http://localhost:8000/admin-only" \
+# 编辑者访问（成功）
+curl -X GET "http://localhost:8000/editor-content" \
      -H "Authorization: Bearer editor"
+
+# 查看者访问（失败 - 需要update权限）
+curl -X GET "http://localhost:8000/editor-content" \
+     -H "Authorization: Bearer viewer"
+```
+
+#### 公开内容路由 (/public-content)
+```bash
+# 管理员访问（成功）
+curl -X GET "http://localhost:8000/public-content" \
+     -H "Authorization: Bearer admin"
+
+# 编辑者访问（成功）
+curl -X GET "http://localhost:8000/public-content" \
+     -H "Authorization: Bearer editor"
+
+# 查看者访问（成功）
+curl -X GET "http://localhost:8000/public-content" \
+     -H "Authorization: Bearer viewer"
+```
+
+#### 用户信息路由 (/me)
+```bash
+# 获取当前用户信息
+curl -X GET "http://localhost:8000/me" \
+     -H "Authorization: Bearer admin"
+
+curl -X GET "http://localhost:8000/me" \
+     -H "Authorization: Bearer editor"
+
+curl -X GET "http://localhost:8000/me" \
+     -H "Authorization: Bearer viewer"
+```
+
+### 3. 完整的权限测试流程
+
+```bash
+# 步骤1: 获取管理员token
+TOKEN=$(curl -s -X POST "http://localhost:8000/token" \
+     -H "Content-Type: application/x-www-form-urlencoded" \
+     -d "username=admin&password=adminpass" | \
+     python -c "import sys, json; print(json.load(sys.stdin)['access_token'])")
+
+echo "获取到的token: $TOKEN"
+
+# 步骤2: 测试所有端点
+echo "测试管理员权限..."
+curl -X GET "http://localhost:8000/admin-only" \
+     -H "Authorization: Bearer $TOKEN"
+echo ""
+
+curl -X GET "http://localhost:8000/editor-content" \
+     -H "Authorization: Bearer $TOKEN"
+echo ""
+
+curl -X GET "http://localhost:8000/public-content" \
+     -H "Authorization: Bearer $TOKEN"
+echo ""
+
+curl -X GET "http://localhost:8000/me" \
+     -H "Authorization: Bearer $TOKEN"
+echo ""
+```
+
+### 4. 错误处理测试
+
+```bash
+# 测试无效token
+curl -X GET "http://localhost:8000/admin-only" \
+     -H "Authorization: Bearer invalid_token"
+
+# 测试过期token（模拟）
+curl -X GET "http://localhost:8000/admin-only" \
+     -H "Authorization: Bearer expired_token"
+
+# 测试无认证访问
+curl -X GET "http://localhost:8000/admin-only"
+
+# 测试权限不足
+curl -X GET "http://localhost:8000/admin-only" \
+     -H "Authorization: Bearer viewer"
+```
+
+### 5. 批量权限测试脚本
+
+创建一个测试脚本 `test_permissions.sh`：
+
+```bash
+#!/bin/bash
+
+# 颜色定义
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# 测试配置
+BASE_URL="http://localhost:8000"
+USERS=("admin" "editor" "viewer")
+PASSWORDS=("adminpass" "editorpass" "viewerpass")
+ENDPOINTS=("/admin-only" "/editor-content" "/public-content" "/me")
+
+echo "🚀 开始RBAC权限系统测试..."
+echo "=================================="
+
+for i in "${!USERS[@]}"; do
+    USERNAME="${USERS[$i]}"
+    PASSWORD="${PASSWORDS[$i]}"
+    
+    echo -e "\n${YELLOW}测试用户: $USERNAME${NC}"
+    echo "----------------------------------"
+    
+    # 获取token
+    echo "正在登录..."
+    TOKEN_RESPONSE=$(curl -s -X POST "$BASE_URL/token" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        -d "username=$USERNAME&password=$PASSWORD")
+    
+    if echo "$TOKEN_RESPONSE" | grep -q "access_token"; then
+        TOKEN=$(echo "$TOKEN_RESPONSE" | python -c "import sys, json; print(json.load(sys.stdin)['access_token'])")
+        echo -e "${GREEN}✅ 登录成功，Token: $TOKEN${NC}"
+        
+        # 测试各个端点
+        for endpoint in "${ENDPOINTS[@]}"; do
+            echo -n "测试端点 $endpoint: "
+            RESPONSE=$(curl -s -w "%{http_code}" -X GET "$BASE_URL$endpoint" \
+                -H "Authorization: Bearer $TOKEN")
+            
+            HTTP_CODE="${RESPONSE: -3}"
+            BODY="${RESPONSE%???}"
+            
+            if [ "$HTTP_CODE" = "200" ]; then
+                echo -e "${GREEN}✅ 成功 (HTTP $HTTP_CODE)${NC}"
+            elif [ "$HTTP_CODE" = "403" ]; then
+                echo -e "${YELLOW}⚠️  权限不足 (HTTP $HTTP_CODE)${NC}"
+            else
+                echo -e "${RED}❌ 失败 (HTTP $HTTP_CODE)${NC}"
+            fi
+        done
+    else
+        echo -e "${RED}❌ 登录失败${NC}"
+    fi
+done
+
+echo -e "\n🎯 测试完成！"
 ```
 
 ## 🔧 扩展和自定义
@@ -268,24 +483,30 @@ fake_roles_db["moderator"] = Role(
 fake_roles_db["admin"].permissions.append("moderate")
 ```
 
-### 自定义权限装饰器
+### 自定义权限检查函数
 
 创建更复杂的权限检查逻辑：
 
 ```python
-def role_required(role_name: str):
-    def decorator(func: Callable):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            current_user = kwargs.get("current_user")
-            if role_name not in current_user.roles:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Require {role_name} role"
-                )
-            return await func(*args, **kwargs)
-        return wrapper
-    return decorator
+def check_role_permission(user: User, required_role: str, required_permission: str) -> bool:
+    """检查用户是否拥有指定角色的指定权限"""
+    if required_role not in user.roles:
+        return False
+    return check_permission(user, required_permission)
+
+def check_multiple_permissions(user: User, required_permissions: List[str]) -> bool:
+    """检查用户是否拥有所有指定权限"""
+    for permission in required_permissions:
+        if not check_permission(user, permission):
+            return False
+    return True
+
+def check_any_permission(user: User, required_permissions: List[str]) -> bool:
+    """检查用户是否拥有任意一个指定权限"""
+    for permission in required_permissions:
+        if check_permission(user, permission):
+            return True
+    return False
 ```
 
 ## 🚨 注意事项
@@ -324,6 +545,35 @@ def role_required(role_name: str):
 ## 📄 许可证
 
 本项目采用MIT许可证，详见LICENSE文件。
+
+## 📋 快速测试参考表
+
+### 用户权限矩阵
+
+| 用户角色 | create | read | update | delete | 可访问端点 |
+|---------|--------|------|--------|--------|------------|
+| admin   | ✅     | ✅   | ✅     | ✅     | 所有端点   |
+| editor  | ❌     | ✅   | ✅     | ❌     | /editor-content, /public-content, /me |
+| viewer  | ❌     | ✅   | ❌     | ❌     | /public-content, /me |
+
+### 常见测试场景
+
+| 测试场景 | 预期结果 | curl命令示例 |
+|---------|----------|-------------|
+| 管理员访问所有端点 | 全部成功 | `curl -H "Authorization: Bearer admin" http://localhost:8000/admin-only` |
+| 编辑者访问管理员端点 | 403权限不足 | `curl -H "Authorization: Bearer editor" http://localhost:8000/admin-only` |
+| 查看者访问编辑者端点 | 403权限不足 | `curl -H "Authorization: Bearer viewer" http://localhost:8000/editor-content` |
+| 无效token访问 | 401未认证 | `curl -H "Authorization: Bearer invalid" http://localhost:8000/admin-only` |
+| 无认证访问 | 422参数错误 | `curl http://localhost:8000/admin-only` |
+
+### 故障排除
+
+| 问题 | 可能原因 | 解决方案 |
+|------|----------|----------|
+| 422 Unprocessable Entity | 缺少Authorization头 | 添加 `-H "Authorization: Bearer <token>"` |
+| 401 Unauthorized | Token无效或过期 | 重新调用 `/token` 端点获取新token |
+| 403 Forbidden | 权限不足 | 检查用户角色和所需权限 |
+| 连接被拒绝 | 服务器未启动 | 运行 `uvicorn rbac_simple:app --reload` |
 
 ---
 

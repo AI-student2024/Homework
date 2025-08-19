@@ -13,11 +13,10 @@ RBAC是一种访问控制模型，通过角色来管理用户权限：
 4. 模拟数据库存储
 """
 
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Form
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
-from typing import List, Dict, Callable, Optional
-from functools import wraps
+from typing import List, Dict
 
 # 创建FastAPI应用实例
 app = FastAPI()
@@ -99,70 +98,38 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     
     return user
 
-# ==================== RBAC权限控制装饰器 ====================
+# ==================== 权限控制函数 ====================
 
-def permission_required(permission: str):
+# 简化的权限检查函数
+def check_permission(user: User, required_permission: str) -> bool:
     """
-    RBAC权限控制装饰器
-    
-    这个装饰器用于保护API端点，确保只有拥有指定权限的用户才能访问
+    检查用户是否拥有指定权限
     
     参数:
-        permission: 访问端点所需的权限名称
+        user: 用户对象
+        required_permission: 所需权限
         
-    使用示例:
-        @app.get("/admin-only")
-        @permission_required("delete")
-        async def admin_only_route(current_user: User = Depends(get_current_user)):
-            return {"message": "This is an admin-only route"}
+    返回:
+        bool: 是否拥有权限
     """
-    def decorator(func: Callable):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            # 从函数参数中获取当前用户
-            current_user = kwargs.get("current_user")
-            
-            # 检查用户是否已认证
-            if not current_user:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Not authenticated"
-                )
-            
-            # 检查用户是否拥有所需权限
-            has_permission = False
-            for role_name in current_user.roles:
-                # 获取角色对象
-                if role := fake_roles_db.get(role_name):
-                    # 检查角色是否包含所需权限
-                    if permission in role.permissions:
-                        has_permission = True
-                        break
-            
-            # 如果没有权限，抛出403禁止访问错误
-            if not has_permission:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Require {permission} permission"
-                )
-            
-            # 权限验证通过，执行原始函数
-            return await func(*args, **kwargs)
-        return wrapper
-    return decorator
+    for role_name in user.roles:
+        if role := fake_roles_db.get(role_name):
+            if required_permission in role.permissions:
+                return True
+    return False
 
 # ==================== API路由定义 ====================
 
 @app.post("/token")
-async def login(username: str, password: str):
+async def login(username: str = Form(...), password: str = Form(...)):
     """
     用户登录接口
     
     验证用户名和密码，返回访问令牌
     
     参数:
-        username: 用户名
-        password: 用户密码
+        username: 用户名 (从表单数据获取)
+        password: 用户密码 (从表单数据获取)
         
     返回:
         包含访问令牌的字典
@@ -181,33 +148,51 @@ async def login(username: str, password: str):
     return {"access_token": username, "token_type": "bearer"}
 
 @app.get("/admin-only")
-@permission_required("delete")  # 需要delete权限，只有admin角色可以访问
 async def admin_only_route(current_user: User = Depends(get_current_user)):
     """
     管理员专用路由
     
     只有拥有delete权限的用户（admin角色）才能访问
     """
+    # 检查用户是否拥有delete权限
+    if not check_permission(current_user, "delete"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Require delete permission"
+        )
+    
     return {"message": "This is an admin-only route"}
 
 @app.get("/editor-content")
-@permission_required("update")  # 需要update权限，admin和editor角色可以访问
 async def editor_content_route(current_user: User = Depends(get_current_user)):
     """
     编辑者内容路由
     
     拥有update权限的用户（admin和editor角色）可以访问
     """
+    # 检查用户是否拥有update权限
+    if not check_permission(current_user, "update"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Require update permission"
+        )
+    
     return {"message": "This is an editor content route"}
 
 @app.get("/public-content")
-@permission_required("read")  # 需要read权限，所有认证用户都可以访问
 async def public_content_route(current_user: User = Depends(get_current_user)):
     """
     公开内容路由
     
     所有认证用户都可以访问（admin、editor、viewer角色都有read权限）
     """
+    # 检查用户是否拥有read权限
+    if not check_permission(current_user, "read"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Require read permission"
+        )
+    
     return {"message": "This is public content accessible to all authenticated users"}
 
 @app.get("/me")
