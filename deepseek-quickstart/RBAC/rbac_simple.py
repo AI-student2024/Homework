@@ -559,8 +559,8 @@ def interactive_cli():
                 username = get_user_input("请输入要测试的用户名")
                 
                 print(f"\n🔍 测试端点: {endpoint[0]}")
-                print(f"   描述: {endpoint[1]}")
-                print(f"   所需权限: {endpoint[2]}")
+                print(f"   描述: {endpoint[2]}")
+                print(f"   所需权限: {endpoint[1]}")
                 
                 if username in fake_users_db:
                     user = fake_users_db[username]
@@ -568,7 +568,7 @@ def interactive_cli():
                     
                     for role_name in user.roles:
                         if role := fake_roles_db.get(role_name):
-                            if endpoint[2] in role.permissions:
+                            if endpoint[1] in role.permissions:
                                 can_access = True
                                 break
                     
